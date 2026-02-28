@@ -56,8 +56,55 @@ def load_nightjet_prices_from_path(path_str: str) -> pd.DataFrame:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # Keep parsed datetime for sorting/plotting while showing original date text in the table.
-    df["date_parsed"] = pd.to_datetime(df["date"], format="%a, %d. %b %Y", errors="coerce")
+    df["date_parsed"] = parse_nightjet_date_column(df["date"])
     return df
+
+
+def parse_nightjet_date_column(raw_dates: pd.Series) -> pd.Series:
+    # Nightjet exports often use German date text like "Mo, 15. Jun 2026" or "Sa, 03. Okt 2026".
+    parsed = pd.to_datetime(raw_dates, format="%a, %d. %b %Y", errors="coerce")
+    if parsed.notna().any():
+        return parsed
+
+    extracted = raw_dates.astype(str).str.extract(r"(?P<day>\d{1,2})\.\s*(?P<month>[A-Za-zÄÖÜäöü]{3,4})\s*(?P<year>\d{4})")
+    month_map = {
+        "jan": 1,
+        "jänner": 1,
+        "feb": 2,
+        "mär": 3,
+        "maer": 3,
+        "mar": 3,
+        "apr": 4,
+        "mai": 5,
+        "may": 5,
+        "jun": 6,
+        "jul": 7,
+        "aug": 8,
+        "sep": 9,
+        "okt": 10,
+        "oct": 10,
+        "nov": 11,
+        "dez": 12,
+        "dec": 12,
+    }
+    month_norm = (
+        extracted["month"]
+        .astype(str)
+        .str.lower()
+        .str.replace("ä", "ae", regex=False)
+        .str.replace("ö", "oe", regex=False)
+        .str.replace("ü", "ue", regex=False)
+        .map(month_map)
+    )
+
+    return pd.to_datetime(
+        {
+            "year": pd.to_numeric(extracted["year"], errors="coerce"),
+            "month": pd.to_numeric(month_norm, errors="coerce"),
+            "day": pd.to_numeric(extracted["day"], errors="coerce"),
+        },
+        errors="coerce",
+    )
 
 
 def list_nightjet_sources() -> list[Path]:
