@@ -1,0 +1,18 @@
+[
+  {
+    "listing_id": "RGVtYW5kU3RheUxpc3Rpbmc6NTg2MDYxMQ==",
+    "title": "Condo in Pore\u010d",
+    "subtitle": "Studio near the sea",
+    "rating_text": "4.85 (188)",
+    "total_price_eur": 1298.0,
+    "nightly_price_eur": 92.71,
+    "latitude": 45.22191,
+    "longitude": 13.59784,
+    "inferred_city": "porec",
+    "city_reachable_under_7h_bus": true,
+    "beach_distance_km_estimate": 0.668,
+    "beach_walk_minutes_estimate": 12.0,
+    "satisfies_filters": true,
+    "room_url": "https://www.airbnb.com/rooms/5860611"
+  }
+]

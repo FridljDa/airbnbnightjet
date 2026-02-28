@@ -1,0 +1,38 @@
+{
+  "source_url": "https://www.airbnb.com/s/Istria--Croatia/homes?refinement_paths%5B%5D=/homes&query=Istria,%20Croatia&check_in=2026-06-14&check_out=2026-06-28&adults=2&search_type=filter_change&search_mode=regular_search&price_filter_input_type=2&price_filter_num_nights=14&price_max=1680",
+  "generated_at_utc": "2026-02-28T13:42:07.984859+00:00",
+  "criteria": {
+    "nights_range": [
+      12,
+      16
+    ],
+    "max_eur_per_night": 120.0,
+    "max_beach_walk_minutes": 15,
+    "bus_constraint": "Hardcoded reachable city allowlist from Zagreb (<7h).",
+    "reachable_cities": [
+      "buzet",
+      "fazana",
+      "labin",
+      "lovran",
+      "medulin",
+      "novigrad",
+      "opatija",
+      "pazin",
+      "porec",
+      "pula",
+      "rabac",
+      "rijeka",
+      "rovinj",
+      "umag",
+      "vodnjan"
+    ]
+  },
+  "resolved_nights_from_url": 14,
+  "total_scraped": 18,
+  "total_matching": 1,
+  "outputs": {
+    "all_json": "data/airbnb_istria_all.json",
+    "filtered_json": "data/airbnb_istria_filtered.json",
+    "filtered_csv": "data/airbnb_istria_filtered.csv"
+  }
+}

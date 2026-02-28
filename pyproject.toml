@@ -6,4 +6,6 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "apify-client>=2.5.0",
+    "beautifulsoup4>=4.14.3",
+    "requests>=2.32.5",
 ]
