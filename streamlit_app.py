@@ -11,6 +11,7 @@ DATA_DIR = Path("data")
 ALL_LISTINGS_PATH = DATA_DIR / "airbnb_istria_all.json"
 FILTERED_LISTINGS_PATH = DATA_DIR / "airbnb_istria_filtered.json"
 RUN_META_PATH = DATA_DIR / "airbnb_istria_run_metadata.json"
+NIGHTJET_DEFAULT_PATH = DATA_DIR / "nightjet_prices.csv"
 
 
 @st.cache_data(show_spinner=False)
@@ -25,6 +26,46 @@ def load_metadata() -> dict:
     if not RUN_META_PATH.exists():
         return {}
     return json.loads(RUN_META_PATH.read_text(encoding="utf-8"))
+
+
+@st.cache_data(show_spinner=False)
+def load_nightjet_prices() -> pd.DataFrame:
+    candidates = [NIGHTJET_DEFAULT_PATH] + sorted(
+        [
+            path
+            for path in DATA_DIR.glob("*.csv")
+            if "nightjet" in path.name.lower() and path != NIGHTJET_DEFAULT_PATH
+        ]
+    )
+    source_path = next((path for path in candidates if path.exists()), None)
+    if source_path is None:
+        return pd.DataFrame()
+
+    df = pd.read_csv(source_path)
+    expected = {
+        "date",
+        "start_station",
+        "arrival_station",
+        "seat_price",
+        "couchette_price",
+        "sleeper_price",
+    }
+    if not expected.issubset(df.columns):
+        return pd.DataFrame()
+
+    for col in ["seat_price", "couchette_price", "sleeper_price"]:
+        df[col] = (
+            df[col]
+            .astype(str)
+            .str.replace(",", ".", regex=False)
+            .str.replace(r"[^0-9.]", "", regex=True)
+            .replace("", pd.NA)
+        )
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Keep parsed datetime for sorting/plotting while showing original date text in the table.
+    df["date_parsed"] = pd.to_datetime(df["date"], format="%a, %d. %b %Y", errors="coerce")
+    return df
 
 
 def build_dataframe(rows: list[dict]) -> pd.DataFrame:
@@ -215,11 +256,86 @@ def render_metrics(df: pd.DataFrame, total_count: int) -> None:
     col4.metric("Median rating", f"{df['average_rating'].median():.2f}" if not df.empty else "N/A")
 
 
-def main() -> None:
-    st.set_page_config(page_title="Airbnb Finder Friend", page_icon="🏡", layout="wide")
-    st.title("🏡 Airbnb Finder Friend")
-    st.caption("Interactive view for your scraped Istria Airbnb listings.")
+def render_nightjet_view() -> None:
+    st.caption("Seat, couchette, and sleeper prices extracted from saved Nightjet HTML.")
+    df = load_nightjet_prices()
+    if df.empty:
+        st.error(
+            "No Nightjet CSV found with expected columns in `data/`. "
+            "Run `extract_nightjet_prices.py` first."
+        )
+        return
 
+    st.sidebar.header("Nightjet Filters")
+    stations_from = sorted(df["start_station"].dropna().astype(str).unique().tolist())
+    stations_to = sorted(df["arrival_station"].dropna().astype(str).unique().tolist())
+
+    selected_from = st.sidebar.multiselect(
+        "Start station",
+        options=stations_from,
+        default=stations_from,
+    )
+    selected_to = st.sidebar.multiselect(
+        "Arrival station",
+        options=stations_to,
+        default=stations_to,
+    )
+    only_with_any_price = st.sidebar.checkbox("Only rows with at least one price", value=True)
+
+    mask = pd.Series(True, index=df.index)
+    if selected_from:
+        mask &= df["start_station"].isin(selected_from)
+    if selected_to:
+        mask &= df["arrival_station"].isin(selected_to)
+    if only_with_any_price:
+        mask &= df[["seat_price", "couchette_price", "sleeper_price"]].notna().any(axis=1)
+
+    view = df.loc[mask].copy()
+    view = view.sort_values(["date_parsed", "date"], ascending=[True, True])
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Visible rows", f"{len(view)}")
+    c2.metric("Seat median", f"€{view['seat_price'].median():.2f}" if not view["seat_price"].dropna().empty else "N/A")
+    c3.metric(
+        "Couchette median",
+        f"€{view['couchette_price'].median():.2f}" if not view["couchette_price"].dropna().empty else "N/A",
+    )
+    c4.metric("Sleeper median", f"€{view['sleeper_price'].median():.2f}" if not view["sleeper_price"].dropna().empty else "N/A")
+
+    st.subheader("Price trends")
+    trend = view.dropna(subset=["date_parsed"]).set_index("date_parsed")[
+        ["seat_price", "couchette_price", "sleeper_price"]
+    ]
+    if trend.empty:
+        st.info("No parsable dates available for trend chart.")
+    else:
+        st.line_chart(trend, height=280)
+
+    st.subheader("Nightjet prices table")
+    table = view[
+        ["date", "start_station", "arrival_station", "seat_price", "couchette_price", "sleeper_price"]
+    ].rename(
+        columns={
+            "date": "Date",
+            "start_station": "Start",
+            "arrival_station": "Arrival",
+            "seat_price": "Seat (€)",
+            "couchette_price": "Couchette (€)",
+            "sleeper_price": "Sleeper (€)",
+        }
+    )
+    st.dataframe(table, width="stretch", hide_index=True)
+
+    csv_bytes = table.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download Nightjet view as CSV",
+        data=csv_bytes,
+        file_name="nightjet_prices_view.csv",
+        mime="text/csv",
+    )
+
+
+def render_airbnb_view() -> None:
     all_rows = load_json(ALL_LISTINGS_PATH)
     filtered_rows = load_json(FILTERED_LISTINGS_PATH)
     metadata = load_metadata()
@@ -275,6 +391,18 @@ def main() -> None:
 
     st.subheader("Listings table")
     render_table(df)
+
+
+def main() -> None:
+    st.set_page_config(page_title="Airbnb Finder Friend", page_icon="🏡", layout="wide")
+    st.title("🏡 Airbnb Finder Friend")
+    view = st.radio("View", ["Airbnb listings", "Nightjet prices"], horizontal=True)
+    if view == "Airbnb listings":
+        st.caption("Interactive view for your scraped Istria Airbnb listings.")
+        render_airbnb_view()
+    else:
+        st.caption("Interactive view for extracted Nightjet seat prices.")
+        render_nightjet_view()
 
 
 if __name__ == "__main__":
