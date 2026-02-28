@@ -13,7 +13,6 @@ CSV_COLUMNS = [
     "date",
     "start_station",
     "arrival_station",
-    "seat_price",
     "couchette_price",
     "sleeper_price",
 ]
@@ -30,8 +29,6 @@ def normalize_price(raw_price: str) -> str:
 def map_type_to_column(type_text: str) -> str | None:
     """Map Nightjet seat type labels to CSV column names."""
     lowered = type_text.lower()
-    if "sitz" in lowered or "seat" in lowered:
-        return "seat_price"
     if "liege" in lowered or "mini cabin" in lowered or "couchette" in lowered:
         return "couchette_price"
     if "schlaf" in lowered or "sleeper" in lowered:
@@ -69,7 +66,6 @@ def extract_rows(html_text: str) -> list[dict[str, str]]:
             "date": html.unescape(dep_date_match.group(1)).strip() if dep_date_match else "",
             "start_station": html.unescape(dep_station_match.group(1)).strip() if dep_station_match else "",
             "arrival_station": html.unescape(arr_station_match.group(1)).strip() if arr_station_match else "",
-            "seat_price": "",
             "couchette_price": "",
             "sleeper_price": "",
         }

@@ -46,14 +46,13 @@ def load_nightjet_prices() -> pd.DataFrame:
         "date",
         "start_station",
         "arrival_station",
-        "seat_price",
         "couchette_price",
         "sleeper_price",
     }
     if not expected.issubset(df.columns):
         return pd.DataFrame()
 
-    for col in ["seat_price", "couchette_price", "sleeper_price"]:
+    for col in ["couchette_price", "sleeper_price"]:
         df[col] = (
             df[col]
             .astype(str)
@@ -257,7 +256,7 @@ def render_metrics(df: pd.DataFrame, total_count: int) -> None:
 
 
 def render_nightjet_view() -> None:
-    st.caption("Seat, couchette, and sleeper prices extracted from saved Nightjet HTML.")
+    st.caption("Couchette and sleeper prices extracted from saved Nightjet HTML.")
     df = load_nightjet_prices()
     if df.empty:
         st.error(
@@ -288,23 +287,22 @@ def render_nightjet_view() -> None:
     if selected_to:
         mask &= df["arrival_station"].isin(selected_to)
     if only_with_any_price:
-        mask &= df[["seat_price", "couchette_price", "sleeper_price"]].notna().any(axis=1)
+        mask &= df[["couchette_price", "sleeper_price"]].notna().any(axis=1)
 
     view = df.loc[mask].copy()
     view = view.sort_values(["date_parsed", "date"], ascending=[True, True])
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     c1.metric("Visible rows", f"{len(view)}")
-    c2.metric("Seat median", f"€{view['seat_price'].median():.2f}" if not view["seat_price"].dropna().empty else "N/A")
-    c3.metric(
+    c2.metric(
         "Couchette median",
         f"€{view['couchette_price'].median():.2f}" if not view["couchette_price"].dropna().empty else "N/A",
     )
-    c4.metric("Sleeper median", f"€{view['sleeper_price'].median():.2f}" if not view["sleeper_price"].dropna().empty else "N/A")
+    c3.metric("Sleeper median", f"€{view['sleeper_price'].median():.2f}" if not view["sleeper_price"].dropna().empty else "N/A")
 
     st.subheader("Price trends")
     trend = view.dropna(subset=["date_parsed"]).set_index("date_parsed")[
-        ["seat_price", "couchette_price", "sleeper_price"]
+        ["couchette_price", "sleeper_price"]
     ]
     if trend.empty:
         st.info("No parsable dates available for trend chart.")
@@ -313,18 +311,17 @@ def render_nightjet_view() -> None:
 
     st.subheader("Nightjet prices table")
     table = view[
-        ["date", "start_station", "arrival_station", "seat_price", "couchette_price", "sleeper_price"]
+        ["date", "start_station", "arrival_station", "couchette_price", "sleeper_price"]
     ].rename(
         columns={
             "date": "Date",
             "start_station": "Start",
             "arrival_station": "Arrival",
-            "seat_price": "Seat (€)",
             "couchette_price": "Couchette (€)",
             "sleeper_price": "Sleeper (€)",
         }
     )
-    price_columns = ["Seat (€)", "Couchette (€)", "Sleeper (€)"]
+    price_columns = ["Couchette (€)", "Sleeper (€)"]
 
     def color_by_relative_price(column: pd.Series) -> list[str]:
         values = pd.to_numeric(column, errors="coerce")
@@ -434,7 +431,7 @@ def main() -> None:
         st.caption("Interactive view for your scraped Istria Airbnb listings.")
         render_airbnb_view()
     else:
-        st.caption("Interactive view for extracted Nightjet seat prices.")
+        st.caption("Interactive view for extracted Nightjet prices.")
         render_nightjet_view()
 
 
