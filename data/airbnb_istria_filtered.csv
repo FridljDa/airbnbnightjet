@@ -1,2 +1,2 @@
-listing_id,title,subtitle,rating_text,total_price_eur,nightly_price_eur,latitude,longitude,inferred_city,city_reachable_under_7h_bus,beach_distance_km_estimate,beach_walk_minutes_estimate,satisfies_filters,room_url
-RGVtYW5kU3RheUxpc3Rpbmc6NTg2MDYxMQ==,Condo in Poreč,Studio near the sea,4.85 (188),1298.0,92.71,45.22191,13.59784,porec,True,0.668,12.0,True,https://www.airbnb.com/rooms/5860611
+listing_id,title,subtitle,rating_text,average_rating,total_price_eur,nightly_price_eur,latitude,longitude,inferred_city,city_reachable_under_7h_bus,beach_distance_km_estimate,beach_walk_minutes_estimate,satisfies_filters,room_url
+RGVtYW5kU3RheUxpc3Rpbmc6NTg2MDYxMQ==,Condo in Poreč,Studio near the sea,4.85 (188),4.85,1298.0,92.71,45.22191,13.59784,porec,True,0.668,12.0,True,https://www.airbnb.com/rooms/5860611
