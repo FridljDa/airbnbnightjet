@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import csv
 import datetime as dt
 import json
@@ -26,6 +27,7 @@ NIGHTS_TARGET = 14
 NIGHTS_TOLERANCE = 2
 MAX_EUR_PER_NIGHT = 120.0
 MAX_WALK_MINUTES_TO_BEACH = 15
+MIN_AVG_RATING = 4.5
 
 # Hardcoded city allowlist for routes typically under 7h from Zagreb by FlixBus/Arriva.
 REACHABLE_CITIES_UNDER_7H = {
@@ -61,6 +63,7 @@ class Listing:
     title: str
     subtitle: str
     rating_text: str | None
+    average_rating: float | None
     total_price_eur: float | None
     nightly_price_eur: float | None
     latitude: float
@@ -131,12 +134,25 @@ def parse_total_price(item: dict[str, Any]) -> float | None:
     return None
 
 
+def parse_average_rating(value: str | None) -> float | None:
+    if not value:
+        return None
+    match = re.search(r"(\d+(?:[\.,]\d+)?)", value)
+    if not match:
+        return None
+    number = match.group(1).replace(",", ".")
+    try:
+        return float(number)
+    except ValueError:
+        return None
+
+
 def decode_room_id(encoded_id: str) -> str | None:
     try:
         decoded = base64.b64decode(encoded_id).decode()
         _, room_id = decoded.split(":", 1)
         return room_id
-    except Exception:
+    except (binascii.Error, UnicodeDecodeError, ValueError):
         return None
 
 
@@ -269,6 +285,8 @@ def to_listing(item: dict[str, Any], nights: int) -> Listing | None:
 
     title = item.get("title", "")
     subtitle = item.get("subtitle", "")
+    rating_text = item.get("avgRatingLocalized")
+    average_rating = parse_average_rating(rating_text)
     total_price = parse_total_price(item)
     nightly_price = (total_price / nights) if total_price and nights > 0 else None
     city = infer_city(title=title, subtitle=subtitle)
@@ -278,7 +296,7 @@ def to_listing(item: dict[str, Any], nights: int) -> Listing | None:
     beach_walk_minutes = None
     try:
         beach_distance_km, beach_walk_minutes = estimate_beach_walk_minutes(lat, lon)
-    except Exception:
+    except requests.RequestException:
         pass
 
     within_price = nightly_price is not None and nightly_price <= MAX_EUR_PER_NIGHT
@@ -286,13 +304,15 @@ def to_listing(item: dict[str, Any], nights: int) -> Listing | None:
         beach_walk_minutes is not None
         and beach_walk_minutes <= MAX_WALK_MINUTES_TO_BEACH
     )
-    is_match = within_price and near_beach and city_allowed
+    within_rating = average_rating is not None and average_rating >= MIN_AVG_RATING
+    is_match = within_price and near_beach and city_allowed and within_rating
     room_id = decode_room_id(encoded_id)
     return Listing(
         listing_id=encoded_id,
         title=title,
         subtitle=subtitle,
-        rating_text=item.get("avgRatingLocalized"),
+        rating_text=rating_text,
+        average_rating=average_rating,
         total_price_eur=round(total_price, 2) if total_price is not None else None,
         nightly_price_eur=round(nightly_price, 2) if nightly_price is not None else None,
         latitude=lat,
@@ -337,6 +357,7 @@ def persist(listings: list[Listing], search_url: str, nights: int) -> None:
             "nights_range": [NIGHTS_TARGET - NIGHTS_TOLERANCE, NIGHTS_TARGET + NIGHTS_TOLERANCE],
             "max_eur_per_night": MAX_EUR_PER_NIGHT,
             "max_beach_walk_minutes": MAX_WALK_MINUTES_TO_BEACH,
+            "min_average_rating": MIN_AVG_RATING,
             "bus_constraint": "Hardcoded reachable city allowlist from Zagreb (<7h).",
             "reachable_cities": sorted(REACHABLE_CITIES_UNDER_7H),
         },
