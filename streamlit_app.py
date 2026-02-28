@@ -324,7 +324,40 @@ def render_nightjet_view() -> None:
             "sleeper_price": "Sleeper (€)",
         }
     )
-    st.dataframe(table, width="stretch", hide_index=True)
+    price_columns = ["Seat (€)", "Couchette (€)", "Sleeper (€)"]
+
+    def color_by_relative_price(column: pd.Series) -> list[str]:
+        values = pd.to_numeric(column, errors="coerce")
+        non_null = values.dropna()
+        if non_null.empty:
+            return [""] * len(column)
+
+        min_val = float(non_null.min())
+        max_val = float(non_null.max())
+
+        styles: list[str] = []
+        for raw in values:
+            if pd.isna(raw):
+                styles.append("")
+                continue
+            if max_val == min_val:
+                ratio = 0.5
+            else:
+                ratio = (float(raw) - min_val) / (max_val - min_val)
+
+            # Low prices are greener, high prices are redder.
+            red = int(226 * ratio + 46 * (1 - ratio))
+            green = int(80 * ratio + 204 * (1 - ratio))
+            blue = int(75 * ratio + 113 * (1 - ratio))
+            styles.append(f"background-color: rgb({red}, {green}, {blue}); color: #111111;")
+        return styles
+
+    styled_table = table.style.format({col: "€{:.2f}" for col in price_columns}).apply(
+        color_by_relative_price,
+        axis=0,
+        subset=price_columns,
+    )
+    st.dataframe(styled_table, width="stretch", hide_index=True)
 
     csv_bytes = table.to_csv(index=False).encode("utf-8")
     st.download_button(
