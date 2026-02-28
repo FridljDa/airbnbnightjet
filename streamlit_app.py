@@ -29,16 +29,9 @@ def load_metadata() -> dict:
 
 
 @st.cache_data(show_spinner=False)
-def load_nightjet_prices() -> pd.DataFrame:
-    candidates = [NIGHTJET_DEFAULT_PATH] + sorted(
-        [
-            path
-            for path in DATA_DIR.glob("*.csv")
-            if "nightjet" in path.name.lower() and path != NIGHTJET_DEFAULT_PATH
-        ]
-    )
-    source_path = next((path for path in candidates if path.exists()), None)
-    if source_path is None:
+def load_nightjet_prices_from_path(path_str: str) -> pd.DataFrame:
+    source_path = Path(path_str)
+    if not source_path.exists():
         return pd.DataFrame()
 
     df = pd.read_csv(source_path)
@@ -65,6 +58,27 @@ def load_nightjet_prices() -> pd.DataFrame:
     # Keep parsed datetime for sorting/plotting while showing original date text in the table.
     df["date_parsed"] = pd.to_datetime(df["date"], format="%a, %d. %b %Y", errors="coerce")
     return df
+
+
+def list_nightjet_sources() -> list[Path]:
+    expected = {"date", "start_station", "arrival_station", "couchette_price", "sleeper_price"}
+    candidates: list[Path] = []
+    for path in sorted(DATA_DIR.glob("*.csv")):
+        try:
+            headers = set(pd.read_csv(path, nrows=0).columns)
+        except (pd.errors.EmptyDataError, pd.errors.ParserError, UnicodeDecodeError, OSError):
+            continue
+        if expected.issubset(headers):
+            candidates.append(path)
+    return candidates
+
+
+def load_nightjet_prices() -> pd.DataFrame:
+    sources = list_nightjet_sources()
+    if not sources:
+        return pd.DataFrame()
+    default_source = next((p for p in sources if p.name == NIGHTJET_DEFAULT_PATH.name), sources[0])
+    return load_nightjet_prices_from_path(str(default_source))
 
 
 def build_dataframe(rows: list[dict]) -> pd.DataFrame:
@@ -365,6 +379,180 @@ def render_nightjet_view() -> None:
     )
 
 
+def render_nightjet_trip_planner_view() -> None:
+    st.caption("Find the cheapest Nightjet outbound/return combination for your target stay.")
+    sources = list_nightjet_sources()
+    if not sources:
+        st.error("No Nightjet CSV found with expected columns in `data/`.")
+        return
+
+    default_idx = next((i for i, p in enumerate(sources) if "roundtrip" in p.name.lower()), 0)
+    source = st.selectbox("Nightjet CSV source", options=sources, index=default_idx, format_func=lambda p: p.name)
+    df = load_nightjet_prices_from_path(str(source))
+    if df.empty:
+        st.error("Selected CSV is empty or invalid.")
+        return
+
+    stations = sorted(df["start_station"].dropna().astype(str).unique().tolist())
+    if not stations:
+        st.error("No stations available in selected dataset.")
+        return
+
+    default_from = "München Ost" if "München Ost" in stations else stations[0]
+    default_to = "Zagreb Glavni kolodvor" if "Zagreb Glavni kolodvor" in stations else stations[min(1, len(stations) - 1)]
+
+    st.sidebar.header("Trip Planner")
+    start_station = st.sidebar.selectbox("Start station", options=stations, index=stations.index(default_from))
+    destination_options = [s for s in stations if s != start_station]
+    if not destination_options:
+        st.warning("Need at least two distinct stations in the dataset.")
+        return
+    arrival_station = st.sidebar.selectbox(
+        "Arrival station",
+        options=destination_options,
+        index=destination_options.index(default_to) if default_to in destination_options else 0,
+    )
+
+    min_date = pd.Timestamp("2026-06-15").date()
+    max_date = pd.Timestamp("2026-07-20").date()
+    window_start = st.sidebar.date_input("Earliest departure date", value=min_date)
+    window_end = st.sidebar.date_input("Latest return date", value=max_date)
+    if window_start > window_end:
+        st.error("Earliest departure date must be on or before latest return date.")
+        return
+
+    target_stay_days = st.sidebar.number_input("Target stay length (days)", min_value=1, max_value=60, value=14, step=1)
+    stay_tolerance_days = st.sidebar.number_input("Stay tolerance (+/- days)", min_value=0, max_value=20, value=2, step=1)
+    min_stay = int(target_stay_days - stay_tolerance_days)
+    max_stay = int(target_stay_days + stay_tolerance_days)
+
+    available_types = [("couchette_price", "Couchette"), ("sleeper_price", "Sleeper")]
+    selected_labels = st.sidebar.multiselect(
+        "Accepted cabin types",
+        options=[label for _, label in available_types],
+        default=["Couchette", "Sleeper"],
+    )
+    if not selected_labels:
+        st.warning("Select at least one cabin type.")
+        return
+    label_to_col = {label: col for col, label in available_types}
+    selected_cols = [label_to_col[label] for label in selected_labels]
+    col_to_label = {col: label for col, label in available_types}
+
+    top_n = st.sidebar.slider("Show top combinations", min_value=5, max_value=200, value=50, step=5)
+
+    outbound = df[
+        (df["start_station"] == start_station)
+        & (df["arrival_station"] == arrival_station)
+        & df["date_parsed"].notna()
+    ].copy()
+    inbound = df[
+        (df["start_station"] == arrival_station)
+        & (df["arrival_station"] == start_station)
+        & df["date_parsed"].notna()
+    ].copy()
+
+    outbound = outbound[
+        (outbound["date_parsed"].dt.date >= window_start) & (outbound["date_parsed"].dt.date <= window_end)
+    ]
+    inbound = inbound[
+        (inbound["date_parsed"].dt.date >= window_start) & (inbound["date_parsed"].dt.date <= window_end)
+    ]
+
+    if outbound.empty or inbound.empty:
+        st.warning("No outbound or return rows in the selected date window for this route pair.")
+        return
+
+    def best_price_and_type(row: pd.Series) -> tuple[float | None, str | None]:
+        prices = {col: row.get(col) for col in selected_cols}
+        valid = {col: float(v) for col, v in prices.items() if pd.notna(v)}
+        if not valid:
+            return None, None
+        best_col = min(valid, key=valid.get)
+        return valid[best_col], col_to_label[best_col]
+
+    outbound_best = outbound.apply(best_price_and_type, axis=1, result_type="expand")
+    outbound["outbound_price"] = outbound_best[0]
+    outbound["outbound_type"] = outbound_best[1]
+
+    inbound_best = inbound.apply(best_price_and_type, axis=1, result_type="expand")
+    inbound["return_price"] = inbound_best[0]
+    inbound["return_type"] = inbound_best[1]
+
+    outbound = outbound[outbound["outbound_price"].notna()].copy()
+    inbound = inbound[inbound["return_price"].notna()].copy()
+    if outbound.empty or inbound.empty:
+        st.warning("No prices available for the selected cabin types on one or both legs.")
+        return
+
+    outbound = outbound[
+        ["date", "date_parsed", "outbound_price", "outbound_type", "start_station", "arrival_station"]
+    ].rename(columns={"date": "outbound_date_text", "date_parsed": "outbound_date"})
+    inbound = inbound[["date", "date_parsed", "return_price", "return_type"]].rename(
+        columns={"date": "return_date_text", "date_parsed": "return_date"}
+    )
+
+    outbound["key"] = 1
+    inbound["key"] = 1
+    combos = outbound.merge(inbound, on="key", how="inner").drop(columns=["key"])
+    combos["stay_days"] = (combos["return_date"] - combos["outbound_date"]).dt.days
+    combos = combos[(combos["stay_days"] >= min_stay) & (combos["stay_days"] <= max_stay)]
+    combos = combos[combos["stay_days"] > 0]
+    if combos.empty:
+        st.warning("No outbound/return combinations match the selected stay-length range.")
+        return
+
+    combos["total_price"] = combos["outbound_price"] + combos["return_price"]
+    combos["stay_delta"] = (combos["stay_days"] - int(target_stay_days)).abs()
+    combos = combos.sort_values(["total_price", "stay_delta", "outbound_date"]).head(top_n)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Matching combinations", f"{len(combos)}")
+    c2.metric("Cheapest total", f"€{combos['total_price'].min():.2f}")
+    c3.metric("Median total", f"€{combos['total_price'].median():.2f}")
+    c4.metric("Target stay window", f"{min_stay}-{max_stay} days")
+
+    st.subheader("Best combinations by total Nightjet price")
+    table = combos[
+        [
+            "outbound_date_text",
+            "return_date_text",
+            "stay_days",
+            "outbound_type",
+            "outbound_price",
+            "return_type",
+            "return_price",
+            "total_price",
+        ]
+    ].rename(
+        columns={
+            "outbound_date_text": "Outbound date",
+            "return_date_text": "Return date",
+            "stay_days": "Stay (days)",
+            "outbound_type": "Outbound cabin",
+            "outbound_price": "Outbound (€)",
+            "return_type": "Return cabin",
+            "return_price": "Return (€)",
+            "total_price": "Total (€)",
+        }
+    )
+    st.dataframe(
+        table.style.format(
+            {"Outbound (€)": "€{:.2f}", "Return (€)": "€{:.2f}", "Total (€)": "€{:.2f}"}
+        ),
+        width="stretch",
+        hide_index=True,
+    )
+
+    csv_bytes = table.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download trip combinations as CSV",
+        data=csv_bytes,
+        file_name="nightjet_trip_planner_view.csv",
+        mime="text/csv",
+    )
+
+
 def render_airbnb_view() -> None:
     all_rows = load_json(ALL_LISTINGS_PATH)
     filtered_rows = load_json(FILTERED_LISTINGS_PATH)
@@ -426,13 +614,16 @@ def render_airbnb_view() -> None:
 def main() -> None:
     st.set_page_config(page_title="Airbnb Finder Friend", page_icon="🏡", layout="wide")
     st.title("🏡 Airbnb Finder Friend")
-    view = st.radio("View", ["Airbnb listings", "Nightjet prices"], horizontal=True)
+    view = st.radio("View", ["Airbnb listings", "Nightjet prices", "Nightjet trip planner"], horizontal=True)
     if view == "Airbnb listings":
         st.caption("Interactive view for your scraped Istria Airbnb listings.")
         render_airbnb_view()
-    else:
+    elif view == "Nightjet prices":
         st.caption("Interactive view for extracted Nightjet prices.")
         render_nightjet_view()
+    else:
+        st.caption("Plan your Nightjet trip by total outbound+return price.")
+        render_nightjet_trip_planner_view()
 
 
 if __name__ == "__main__":
